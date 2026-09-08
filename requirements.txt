@@ -1,0 +1,2 @@
+streamlit
+aas-core3.0
