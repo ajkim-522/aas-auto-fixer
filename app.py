@@ -1086,57 +1086,231 @@ def split_tokens(idshort):
 
 
 DATETIME_TOKENS = {"datetime", "timestamp"}
-DATETIME_PAIRS = {
-    ("start", "time"), ("end", "time"),
-    ("failure", "time"), ("event", "time"),
+DATETIME_CONTEXT = {"start", "end", "failure", "event", "issue", "expiry"}
+
+# ---------------------------------------------------------
+# 타입 판정은 "head word"(복합명사의 마지막 단어)를 우선으로 본다.
+# 영어 복합명사는 맨 뒤 단어가 그 항목의 정체를 결정한다.
+#   TensionControlMethod -> Method  -> 문자열
+#   TargetTemperature    -> Temperature -> 실수
+#   MaximumTurnCount     -> Count   -> 정수
+# "of" 가 있으면 그 앞부분이 본체다. (YearOfConstruction -> Year)
+# ---------------------------------------------------------
+
+# 문자열이어야 하는 head
+STRING_HEADS = {
+    # 식별자·코드
+    "id", "ids", "identifier", "number", "no", "code", "serial",
+    "version", "revision", "barcode", "batch", "lot", "sku", "gtin",
+    "mac", "ip", "key", "password", "checksum", "hash", "signature",
+    "uuid", "guid", "reference", "path", "filename", "extension",
+    # 이름·설명
+    "name", "text", "description", "comment", "note", "label", "title",
+    "designation", "remark", "reason", "message", "caption", "summary",
+    # 분류·상태
+    "type", "kind", "class", "category", "grade", "shape", "material",
+    "color", "colour", "state", "status", "mode", "method", "action",
+    "priority", "role", "function", "protocol", "encoding",
+    "standard", "specification", "system", "format", "unit", "symbol",
+    "component", "recipe", "domain", "organization", "department",
+    "source", "subject", "scope", "phase", "stage",
+    # 주소·연락처
+    "address", "street", "city", "country", "region", "zip", "postal",
+    "phone", "fax", "email", "contact", "language", "currency",
+    "location", "site", "plant", "line", "area",
+    # 기타
+    "year", "declaration", "certificate", "approval", "guideline",
 }
-BOOLEAN_TOKENS = {
-    "enabled", "disabled", "detected", "flag", "yesno",
-    "available", "active", "valid", "primary", "used",
+
+# 참/거짓 head
+BOOLEAN_HEADS = {
+    "flag", "enabled", "disabled", "detected", "available", "active",
+    "valid", "installed", "connected", "required", "present", "yesno",
+    "primary", "used", "ok", "pass", "fail",
 }
-BOOLEAN_PREFIXES = ("is", "has", "can", "use")
-INTEGER_TOKENS = {
-    "count", "quantity", "qty", "retry", "index", "number",
-    "cycles", "step", "level", "num",
+
+# 정수 head (개수·횟수)
+INTEGER_HEADS = {
+    "count", "quantity", "qty", "retry", "retries", "cycles", "attempts",
+    "errors", "warnings", "alarms", "channels", "slots", "pieces",
+    "units", "shots", "passes", "iterations", "turns", "layers",
+    "occurrences", "hits", "faults",
 }
-DOUBLE_TOKENS = {
+
+# 실수 head (측정값·물리량·지표)
+REAL_HEADS = {
+    # 물리량
     "temperature", "temp", "pressure", "speed", "velocity", "current",
-    "voltage", "power", "frequency", "flow", "length", "width", "height",
-    "diameter", "coordinate", "position", "distance", "thickness", "depth",
-    "deviation", "accuracy", "score", "ratio", "rate", "efficiency",
-    "weight", "mass", "volume", "torque", "load", "consumption", "energy",
-    "angle", "amplitude", "humidity", "percentage", "percent", "contrast",
+    "voltage", "power", "frequency", "flow", "flowrate", "length",
+    "width", "height", "diameter", "radius", "distance", "thickness",
+    "depth", "weight", "mass", "volume", "torque", "load", "force",
+    "energy", "consumption", "angle", "amplitude", "humidity",
+    "density", "viscosity", "resistance", "impedance", "inductance",
+    "capacitance", "flux", "luminance", "noise", "wavelength",
+    "intensity", "gain", "altitude", "acceleration", "vibration",
+    "tension", "pitch", "feed", "stroke", "clearance", "gap",
+    "backlash", "runout", "roughness", "hardness", "conductivity",
+    "capacity", "throughput", "bandwidth", "latency", "rpm",
+    # 비율·정확도·지표
+    "accuracy", "precision", "tolerance", "deviation", "error",
+    "ratio", "rate", "efficiency", "score", "factor", "index",
+    "probability", "percentage", "percent", "offset", "variance",
+    "resolution", "calibration", "coordinate", "position", "setpoint",
+    "threshold", "limit", "margin", "span", "wear", "degradation",
+    "lifetime", "rul", "mtbf", "mttr", "utilization",
+    "latitude", "longitude", "elevation", "delta", "difference",
+    "average", "mean", "median", "sum", "total",
 }
+
+# head 가 애매할 때 숫자임을 시사하는 접두어
+NUMERIC_PREFIXES = {
+    "minimum", "maximum", "min", "max", "average", "avg", "mean",
+    "total", "sum", "rated", "nominal", "peak", "median", "actual",
+    "measured", "calculated", "estimated", "remaining", "elapsed",
+}
+
+BOOLEAN_PREFIXES = ("is", "has", "can", "was", "does", "are", "should")
+
+URI_HEADS = {"uri", "url", "link", "href", "endpoint", "website"}
+
 STATUS_TOKENS = {"status", "state", "mode"}
 RESULT_TOKENS = {"result", "judgement", "judgment", "verdict"}
 
+DECIMAL_PATTERN = re.compile(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?")
+INTEGER_PATTERN = re.compile(r"[+-]?\d+")
+
+
+def looks_like_padded_number(text):
+    """0044 처럼 앞자리 0이 있는 값은 문자열로 봐야 한다."""
+    stripped = text.lstrip("+-")
+    return len(stripped) > 1 and stripped.startswith("0") and "." not in stripped
+
+
+# 그 자체로는 정체를 알려주지 않는 수식어성 head.
+# 이런 단어가 끝에 오면 한 칸 앞 단어를 본다.
+#   TurnCountTarget -> Count -> 정수
+#   AssessmentTarget -> Assessment -> (미확정)
+MODIFIER_HEADS = {
+    "target", "value", "setting", "spec", "actual", "measured",
+    "new", "old", "previous", "next",
+}
+
+
+def head_tokens(idshort):
+    """
+    idShort 를 토큰으로 쪼개고, 'of' 앞부분을 본체로 삼는다.
+    수식어성 단어가 끝에 오면 한 칸 앞으로 넘어간다.
+    반환: (전체 토큰 리스트, head 단어)
+    """
+    tokens = split_tokens(idshort)
+    if not tokens:
+        return [], ""
+
+    core = tokens
+    for separator in ("of", "for", "in", "at", "per"):
+        if separator in tokens:
+            before = tokens[: tokens.index(separator)]
+            if before:
+                core = before
+                break
+
+    index = len(core) - 1
+    while index > 0 and core[index] in MODIFIER_HEADS:
+        index -= 1
+
+    return tokens, core[index]
+
+
+def infer_value_type(idshort, value_text=None):
+    """
+    idShort 의 head word 와 실제 값에서 xsd valueType 을 추론한다.
+
+    판정 순서
+      1. Is/Has 로 시작하면 참/거짓
+      2. head word (복합명사의 마지막 단어)
+      3. 실제 값의 형태
+      4. 전체 토큰 / 숫자 접두어
+    """
+    tokens, head = head_tokens(idshort)
+    token_set = set(tokens)
+    text = (value_text or "").strip()
+
+    # 1. Is/Has/Can 접두, 또는 값이 명확히 true/false
+    if tokens and tokens[0] in BOOLEAN_PREFIXES and len(tokens) > 1:
+        return "xs:boolean"
+    if text.lower() in {"true", "false"}:
+        return "xs:boolean"
+
+    # 2. head word 기반
+    if head in STRING_HEADS:
+        return "xs:string"
+    if head in BOOLEAN_HEADS:
+        return "xs:boolean"
+    if head in URI_HEADS:
+        return "xs:anyURI"
+
+    if head in DATETIME_TOKENS:
+        return "xs:dateTime"
+    if head == "date":
+        return "xs:dateTime" if token_set & {"datetime"} else "xs:date"
+    if head == "time":
+        # StartTime/EndTime 은 시각, ResponseTime/CycleTime 은 소요 시간
+        if token_set & DATETIME_CONTEXT:
+            return "xs:dateTime"
+        return "xs:float"
+
+    if head in INTEGER_HEADS:
+        return "xs:int"
+    if head in REAL_HEADS:
+        return "xs:float"
+
+    # 3. 실제 값의 형태
+    if text:
+        if looks_like_padded_number(text):
+            return "xs:string"
+        if text.lower() in {"true", "false"}:
+            return "xs:boolean"
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+            return "xs:date"
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}T[\d:.]+.*", text):
+            return "xs:dateTime"
+        if INTEGER_PATTERN.fullmatch(text):
+            return "xs:float" if tokens and tokens[0] in NUMERIC_PREFIXES \
+                else "xs:int"
+        if DECIMAL_PATTERN.fullmatch(text):
+            return "xs:float"
+        return "xs:string"
+
+    # 4. 전체 토큰 / 숫자 접두어
+    if token_set & BOOLEAN_HEADS:
+        return "xs:boolean"
+    if token_set & DATETIME_TOKENS:
+        return "xs:dateTime"
+    if "date" in token_set:
+        return "xs:date"
+    if token_set & INTEGER_HEADS:
+        return "xs:int"
+    if token_set & REAL_HEADS:
+        return "xs:float"
+    if tokens and tokens[0] in NUMERIC_PREFIXES:
+        return "xs:float"
+
+    return "xs:string"
+
 
 def infer_property_type_and_value(idshort):
-    tokens = split_tokens(idshort)
-    token_set = set(tokens)
+    """valueType 과 채워 넣을 샘플 값을 함께 돌려준다."""
+    value_type = infer_value_type(idshort)
 
-    if token_set & DATETIME_TOKENS:
-        return "xs:dateTime", SAMPLE_DATETIME
-    for first, second in DATETIME_PAIRS:
-        if first in token_set and second in token_set:
-            return "xs:dateTime", SAMPLE_DATETIME
-    if "date" in token_set:
-        return "xs:date", SAMPLE_DATE
-    if "time" in token_set:
-        return "xs:time", SAMPLE_TIME
-    if token_set & BOOLEAN_TOKENS:
-        return "xs:boolean", "true"
-    if tokens and tokens[0] in BOOLEAN_PREFIXES and len(tokens) > 1:
-        return "xs:boolean", "true"
-    if token_set & DOUBLE_TOKENS:
-        return "xs:double", "1.0"
-    if token_set & INTEGER_TOKENS:
-        return "xs:int", "1"
-    if token_set & STATUS_TOKENS:
-        return "xs:string", "Normal"
-    if token_set & RESULT_TOKENS:
-        return "xs:string", "Success"
-    return "xs:string", "Sample"
+    if value_type == "xs:string":
+        token_set = set(split_tokens(idshort))
+        if token_set & STATUS_TOKENS:
+            return "xs:string", "Normal"
+        if token_set & RESULT_TOKENS:
+            return "xs:string", "Success"
+        return "xs:string", "Sample"
+
+    return value_type, sample_value_for(value_type)
 
 
 def normalize_value_type(value_type):
@@ -1226,7 +1400,7 @@ def infer_type_from_value(value_text):
     if re.fullmatch(r"[+-]?\d+", text):
         return "xs:int"
     if re.fullmatch(r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?", text):
-        return "xs:double"
+        return "xs:float"
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}(Z|[+-]\d{2}:\d{2})?", text):
         return "xs:date"
     if re.fullmatch(
@@ -1248,6 +1422,105 @@ def normalize_value_text(value_text, value_type):
         if lowered in {"false", "0"}:
             return "false"
     return value_text
+
+
+DOUBLE_ALIASES = {
+    "xs:double", "xs:decimal", "double", "decimal",
+    "http://www.w3.org/2001/XMLSchema#double",
+    "http://www.w3.org/2001/XMLSchema#decimal",
+}
+
+
+def unify_real_value_types(root, logs):
+    """실수 타입을 xs:float 하나로 통일한다 (xs:double / xs:decimal 포함)."""
+    count = 0
+    for element_name in ("property", "range"):
+        for element in find_all_by_name(root, element_name):
+            value_type_element = find_direct_child(element, "valueType")
+            if value_type_element is None:
+                continue
+            current = text_of(value_type_element)
+            if normalize_value_type(current) not in DOUBLE_ALIASES:
+                continue
+            value_type_element.text = "xs:float"
+            count += 1
+
+    # SubmodelElementList 의 valueTypeListElement 도 함께 맞춘다
+    for sml in find_all_by_name(root, "submodelElementList"):
+        vt_element = find_direct_child(sml, "valueTypeListElement")
+        if vt_element is None:
+            continue
+        if normalize_value_type(text_of(vt_element)) in DOUBLE_ALIASES:
+            vt_element.text = "xs:float"
+            count += 1
+
+    if count:
+        logs.append({
+            "구분": "실수 타입 통일",
+            "요소": "(전체)",
+            "수정 전": "xs:double / xs:decimal",
+            "수정 후": f"xs:float ({count}건)",
+            "결과": "Auto Fixed",
+        })
+
+
+def refine_property_value_types(root, logs):
+    """
+    valueType 이 범용 xs:string 으로만 되어 있는 Property 를
+    idShort 의 의미와 실제 값을 근거로 구체적인 타입으로 바꾼다.
+
+    - 이미 구체적인 타입(xs:int, xs:float ...)은 건드리지 않는다.
+    - SerialNumber, OrderNumber, 0044 처럼 문자열이어야 하는 값은 그대로 둔다.
+    - 값을 새로 만들지는 않는다. 기존 값이 있으면 그 형태를 근거로 삼는다.
+    """
+    for prop in find_all_by_name(root, "property"):
+        value_type_element = find_direct_child(prop, "valueType")
+        current = normalize_value_type(text_of(value_type_element))
+
+        # 값이 없거나 이미 구체적인 타입이면 여기서는 건드리지 않는다
+        if current and current not in STRING_TYPES:
+            continue
+
+        idshort = get_idshort(prop)
+        if not idshort:
+            continue
+
+        value_text = text_of(find_direct_child(prop, "value"))
+        inferred = infer_value_type(idshort, value_text)
+
+        if inferred == current or normalize_value_type(inferred) in STRING_TYPES:
+            continue
+
+        # 기존 값이 새 타입과 맞지 않으면 바꾸지 않는다 (값 보존 우선)
+        if value_text and not value_matches_type(value_text, inferred):
+            continue
+
+        if value_type_element is None:
+            value_type_element = ET.Element(ns_tag(prop, "valueType"))
+            insert_ordered(prop, value_type_element)
+
+        value_type_element.text = inferred
+        logs.append({
+            "구분": "Property valueType 세분화",
+            "요소": idshort,
+            "수정 전": f"{current or '없음'} / value={value_text[:20] or '없음'}",
+            "수정 후": inferred,
+            "결과": "Auto Fixed",
+        })
+
+        # 값 표기 정규화 (True -> true)
+        value_element = find_direct_child(prop, "value")
+        if value_element is not None and value_text:
+            normalized = normalize_value_text(value_text, inferred)
+            if normalized != value_text:
+                value_element.text = normalized
+                logs.append({
+                    "구분": "Property value 표기 정규화",
+                    "요소": idshort,
+                    "수정 전": value_text,
+                    "수정 후": normalized,
+                    "결과": "Auto Fixed",
+                })
 
 
 def fix_missing_property_values(root, logs):
@@ -1322,9 +1595,9 @@ CD_DATATYPE_TO_XSD = {
     "BLOB": "xs:string",
     "RATIONAL": "xs:string",
     "RATIONAL_MEASURE": "xs:string",
-    "REAL_MEASURE": "xs:double",
-    "REAL_COUNT": "xs:double",
-    "REAL_CURRENCY": "xs:double",
+    "REAL_MEASURE": "xs:float",
+    "REAL_COUNT": "xs:float",
+    "REAL_CURRENCY": "xs:float",
     "INTEGER_COUNT": "xs:int",
     "INTEGER_MEASURE": "xs:int",
     "INTEGER_CURRENCY": "xs:int",
@@ -1419,7 +1692,7 @@ def align_property_and_cd_types(root, logs, refine_by_value=True):
        value 를 근거로 valueType 을 다시 정한다. (예: xs:float + "1500 x 3000")
     2) valueType 이 xs:string(범용) 이고 CD 의 dataType 이 더 구체적이며
        value 가 그 형식에 맞으면 valueType 을 끌어올린다.
-       (예: xs:string + REAL_MEASURE + "125.5" -> xs:double)
+       (예: xs:string + REAL_MEASURE + "125.5" -> xs:float)
     3) 그 외에는 CD 의 dataType 을 valueType 에 맞춘다.
        CD 에 IEC61360 이나 dataType 이 없으면 새로 만든다.
     """
@@ -2052,7 +2325,10 @@ def process_aas_xml(xml_bytes, xml_path, options):
             root, logs, options.get("create_missing_cd", True)
         )
 
-        # 6. Property 값 보충
+        # 6. Property valueType 세분화 -> 값 보충
+        if options.get("refine_value_types", True):
+            refine_property_value_types(root, logs)
+        unify_real_value_types(root, logs)
         fix_missing_property_values(root, logs)
 
         # 7. 타입 정렬
@@ -2333,7 +2609,7 @@ AAS가 여러 개면 Submodel별 소유 AAS를 따로 판별합니다.
 값이 선언된 타입과 안 맞으면 값 기준으로 `valueType`을 다시 정하고
 (`xs:float` + `1500 × 3000` → `xs:string`),
 `valueType`이 범용 `xs:string`인데 CD가 더 구체적이면 끌어올리고
-(`xs:string` + `REAL_MEASURE` + `125.5` → `xs:double`),
+(`xs:string` + `REAL_MEASURE` + `125.5` → `xs:float`),
 그 외에는 CD의 `dataType`을 `valueType`에 맞춥니다
 (`xs:date` → `DATE`, `xs:anyURI` → `IRI`).
 CD에 IEC61360이나 `dataType`이 아예 없으면 만들어 넣습니다.
@@ -2368,6 +2644,16 @@ with st.expander("⚙️ 옵션"):
         "매칭되는 CD가 없으면 ConceptDescription 자동 생성",
         value=True,
         help="끄면 Warning으로만 보고합니다.",
+    )
+    refine_value_types = st.checkbox(
+        "xs:string으로만 되어 있는 valueType을 세분화",
+        value=True,
+        help=(
+            "idShort 의미와 실제 값을 근거로 xs:int / xs:float / "
+            "xs:boolean / xs:date 등으로 나눕니다. 실수는 xs:float 으로 "
+            "통일하며, SerialNumber, 0044 처럼 "
+            "문자열이어야 하는 값은 그대로 둡니다."
+        ),
     )
     refine_by_value = st.checkbox(
         "값이 형식에 안 맞으면 valueType을 값 기준으로 재추론",
@@ -2406,6 +2692,7 @@ else:
 
             options = {
                 "create_missing_cd": create_missing_cd,
+                "refine_value_types": refine_value_types,
                 "refine_by_value": refine_by_value,
                 "create_iec61360": create_iec61360_option,
                 "reorder": reorder_option,
