@@ -51,7 +51,9 @@ rows = core.build_report(next(iter(result["xml_texts"].values())),
 - 엑셀에서 고친 값은 기존 값도 덮어씁니다. 단, IDTA·표준 CD 영문 원문은 바꾸지 않습니다
   (원문이 비어 있으면 입력 가능).
 - 정의를 고치면 CD description 도 같은 값으로, 한글명을 고치면 displayName(ko)도 같이 맞춥니다.
-- 예시값은 valueType 형식에 맞는지 확인하고, 안 맞으면 반영하지 않고 경고합니다.
+- 예시값이 valueType 형식과 다르면, 입력한 값이 맞다고 보고 valueType 을 값에 맞게 바꾸고
+  CD dataType 도 함께 맞춥니다(예: `EnergyUnit` 이 xs:float 인데 `kWh` 입력 → xs:string).
+  IDTA 템플릿 요소는 valueType 을 바꾸지 않고 경고합니다.
   Range 는 `최소..최대` 로 적습니다. 엑셀이 숫자·날짜로 바꾼 값도 원래 형식으로 되돌려 읽습니다.
 - 다시 실행할 때 원본 AASX를 쓰는 이유: AutoFixed 파일에서는 이미 들어간 임의값(`1.0` 등)을
   진짜 값과 구분할 수 없습니다.
@@ -65,9 +67,9 @@ rows = core.build_report(next(iter(result["xml_texts"].values())),
 요소 종류, valueType, 단위, 상위·하위 idShort, 기존 정의이며 id URL은 보내지
 않습니다. 사내 정보보호 정책상 외부 API 사용이 허용되는지 먼저 확인하세요.
 
-## v2 → v3 변경
+## v1 → v2 변경
 
-| 구분 | v2 | v3 |
+| 구분 | v1 | v2 |
 |---|---|---|
 | IDTA 템플릿 | 모든 CD id·Submodel semanticId를 smart-factory로 덮어씀 (DN/HD/TD semanticId 손상) | 표준 id(IRDI, admin-shell IRI 등) 보호 |
 | 템플릿 semanticId에 CD 없음 | 같은 idShort CD로 semanticId를 바꿈 | IRDI → 같은 id로 CD 생성 / IRI → smart-factory CD + supplementalSemanticId·isCaseOf |
@@ -76,7 +78,7 @@ rows = core.build_report(next(iter(result["xml_texts"].values())),
 | AAS | id만 | assetKind=Type, globalAssetId 형식, 끊어진 ModelReference 복구 |
 | Submodel | id·semanticId | + kind=Template |
 | CD 텍스트 | 영문 자리표시자 추가 | description↔definition 보충, displayName, 요소 description=CD definition, 검토 엑셀(CD 목록) 왕복, 한글 누락·자리표시자 경고 |
-| 타입 | xs:int | xs:integer (실수는 xs:float), 표준 CD는 보호 후 경고 |
+| 타입 | xs:int | xs:integer (실수는 xs:float), 표준 CD는 보호 후 경고, 입력 예시값 기준 valueType 보정 |
 | idShort | 하이픈 허용 | 3.0은 하이픈 제거, 3.1은 허용 |
 | 패키지 | 처리 없음 | 디렉터리 엔트리, 파일명 언더바, 미참조 파일, aas-suppl, Content_Types, 썸네일 |
 | 점검 | 자체 점검 몇 항목 | Validator 항목 번호별 리포트 + aas-core 3.0/3.1 자동 선택 |
