@@ -1,4 +1,4 @@
-# AAS Validator Auto Fixer v3
+# AAS Validator Auto Fixer v2
 
 추진단 Validator(IDTA 2-x·3-x·4-x, KOSMO-AAS·Submodel·SME·CD) 기준으로
 반복되는 오류를 1차로 자동 보정하는 도구입니다.
